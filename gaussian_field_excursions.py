@@ -18,7 +18,7 @@ from scipy import ndimage
 DEFAULT_COLOURS = ("black", "white", "green", "orange")
 
 
-def _covariance_model(covariance, beta, nu):
+def _covariance_model(covariance, beta=1, nu=1):
     """Build the requested covariance model and return it with a display name."""
     covariance_key = str(covariance).strip().lower()
 
@@ -82,11 +82,11 @@ def simulate_field(
 
 
 def find_excursion_set(field, threshold=0):
-    """Return the lower excursion set ``field < threshold`` as a boolean mask."""
+    """Return the lower excursion set ``field > threshold`` as a boolean mask."""
     field = np.asarray(field)
     if field.ndim != 2:
         raise ValueError("field must be a two-dimensional array")
-    return field < threshold
+    return field > threshold
 
 
 def find_largest_component(excursion_set):
@@ -129,70 +129,77 @@ def find_boundary(largest_component):
 
 
 def plot_field(
-    data,
-    plot_type="field",
-    colours=DEFAULT_COLOURS,
+    field,
     ax=None,
     show=True,
     save=False,
     filename="",
 ):
-    """Plot a field or any result from the processing pipeline.
-
-    ``plot_type`` can be ``"field"``, ``"excursion"``,
-    ``"largest_component"``, or ``"boundary"``. For the three mask options,
-    ``data`` should be the boolean array returned by the corresponding finder
-    function. Pipeline arrays are transposed for display so their x-axis is
-    horizontal and their y-axis is vertical. The created ``(figure, axes)``
-    pair is returned.
-    """
-    data = np.asarray(data)
-    if data.ndim != 2:
-        raise ValueError("data must be a two-dimensional array")
-    if len(colours) < 4:
-        raise ValueError("colours must contain at least four colours")
-
-    plot_key = str(plot_type).strip().lower().replace(" ", "_")
-    mask_colours = {
-        "excursion": (colours[0], colours[1]),
-        "excursion_set": (colours[0], colours[1]),
-        "largest_component": (colours[0], colours[2]),
-        "boundary": (colours[0], colours[3]),
-    }
+    """Plot a two-dimensional field using a continuous colour scale."""
+    field = np.asarray(field)
+    if field.ndim != 2:
+        raise ValueError("field must be a two-dimensional array")
 
     if ax is None:
         fig, ax = plt.subplots()
     else:
         fig = ax.figure
 
-    if plot_key == "field":
-        ax.imshow(data.T, interpolation="nearest")
-    elif plot_key in mask_colours:
-        cmap = matplotlib.colors.ListedColormap(mask_colours[plot_key])
-        ax.imshow(
-            data.astype(bool).T,
-            cmap=cmap,
-            interpolation="nearest",
-            vmin=0,
-            vmax=1,
-        )
-    else:
+    ax.imshow(field.T, interpolation="nearest")
+    return _finish_plot(fig, ax, show, save, filename, "field.png")
+
+
+def plot_mask(
+    mask,
+    colours=DEFAULT_COLOURS,
+    ax=None,
+    show=True,
+    save=False,
+    filename="",
+):
+    """Plot a two-dimensional Boolean or non-negative integer-labelled mask.
+
+    Each integer label is mapped to the colour at the corresponding position
+    in ``colours``. Boolean masks are treated as masks with labels zero and one.
+    Pipeline arrays are transposed for display so their x-axis is horizontal
+    and their y-axis is vertical.
+    """
+    mask = np.asarray(mask)
+    if mask.ndim != 2:
+        raise ValueError("mask must be a two-dimensional array")
+    if mask.size == 0:
+        raise ValueError("mask must not be empty")
+    if not (
+        np.issubdtype(mask.dtype, np.bool_)
+        or np.issubdtype(mask.dtype, np.integer)
+    ):
+        raise TypeError("mask must contain Boolean or integer labels")
+    if np.any(mask < 0):
+        raise ValueError("mask labels must be non-negative")
+
+    labelled_mask = mask.astype(np.int64, copy=False)
+    number_of_labels = int(labelled_mask.max()) + 1
+    if len(colours) < number_of_labels:
         raise ValueError(
-            "plot_type must be 'field', 'excursion', 'largest_component', "
-            "or 'boundary'"
+            f"colours must contain at least {number_of_labels} colours"
         )
 
-    ax.set_xticks([])
-    ax.set_yticks([])
+    if ax is None:
+        fig, ax = plt.subplots()
+    else:
+        fig = ax.figure
 
-    if save:
-        if not filename:
-            filename = f"{plot_key}.png"
-        fig.savefig(Path(filename), bbox_inches="tight")
-    if show:
-        plt.show()
+    cmap = matplotlib.colors.ListedColormap(colours[:number_of_labels])
+    boundaries = np.arange(number_of_labels + 1) - 0.5
+    norm = matplotlib.colors.BoundaryNorm(boundaries, cmap.N)
+    ax.imshow(
+        labelled_mask.T,
+        cmap=cmap,
+        norm=norm,
+        interpolation="nearest",
+    )
 
-    return fig, ax
+    return _finish_plot(fig, ax, show, save, filename, "mask.png")
 
 
 def _boolean_mask(array, name):
@@ -213,6 +220,19 @@ def _thicken_boundary(boundary, radius):
     return ndimage.binary_dilation(boundary, structure=disk)
 
 
+def _finish_plot(fig, ax, show, save, filename, default_filename):
+    """Apply common figure formatting, saving, and display behaviour."""
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+    if save:
+        fig.savefig(Path(filename or default_filename), bbox_inches="tight")
+    if show:
+        plt.show()
+
+    return fig, ax
+
+
 def plot_excursion(
     field,
     threshold=0,
@@ -231,8 +251,6 @@ def plot_excursion(
     must already have been generated, for example by ``simulate_field``. The
     intermediate arrays are returned in a dictionary so callers can reuse them.
     """
-    if len(colours) < 4:
-        raise ValueError("colours must contain at least four colours")
     if thickness < 0:
         raise ValueError("thickness must be non-negative")
 
@@ -254,28 +272,25 @@ def plot_excursion(
             display[displayed_boundary] = 3
 
     number_of_colours = 4 if boundary else (3 if largest_comp else 2)
-    cmap = matplotlib.colors.ListedColormap(colours[:number_of_colours])
-    fig, ax = plt.subplots()
-    ax.imshow(
-        display.T,
-        cmap=cmap,
-        interpolation="nearest",
-        vmin=0,
-        vmax=number_of_colours - 1,
-    )
-    ax.set_xticks([])
-    ax.set_yticks([])
+    if len(colours) < number_of_colours:
+        raise ValueError(
+            f"colours must contain at least {number_of_colours} colours"
+        )
 
-    if save:
-        if not filename:
-            x_pixels, y_pixels = field.shape
-            filename = (
-                f"excursion_{x_pixels}x{y_pixels}px_"
-                f"threshold={threshold}.png"
-            )
-        fig.savefig(Path(filename), bbox_inches="tight")
-    if show:
-        plt.show()
+    if save and not filename:
+        x_pixels, y_pixels = field.shape
+        filename = (
+            f"excursion_{x_pixels}x{y_pixels}px_"
+            f"threshold={threshold}.png"
+        )
+
+    fig, ax = plot_mask(
+        display,
+        colours=colours[:number_of_colours],
+        show=show,
+        save=save,
+        filename=filename,
+    )
 
     return {
         "field": field,
