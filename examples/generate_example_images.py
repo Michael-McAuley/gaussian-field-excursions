@@ -1,8 +1,9 @@
 """Create the images used in the project documentation."""
 
-from gaussian_field_excursions import simulate_field, plot_excursion, plot_field
+import gaussian_field_excursions as gfe
 from pathlib import Path
 import matplotlib.pyplot as plt
+import numpy as np
 
 def main():
 
@@ -11,7 +12,7 @@ def main():
     )
     output_directory.mkdir(parents=True, exist_ok=True)
 
-    field_bf = simulate_field(
+    field_bf = gfe.simulate_field(
         x_size=100,
         y_size=100,
         pixel_density=10,
@@ -19,7 +20,7 @@ def main():
         seed=123
     )
 
-    plot_excursion(
+    gfe.plot_excursion(
         field=field_bf,
         save=True,
         largest_comp=False,
@@ -27,14 +28,14 @@ def main():
         show=False
     )
     
-    plot_excursion(
+    gfe.plot_excursion(
         field=field_bf,
         save=True,
         filename=output_directory / "bargmann_fock_largest_component.png",
         show=False
     )
 
-    field_rpw = simulate_field(
+    field_rpw = gfe.simulate_field(
         x_size=100,
         y_size=100,
         pixel_density=10,
@@ -42,7 +43,7 @@ def main():
         seed=123
     )
 
-    plot_excursion(
+    gfe.plot_excursion(
         field=field_rpw,
         threshold=0.5,
         save=True,
@@ -51,7 +52,7 @@ def main():
         show=False
     )
 
-    plot_excursion(
+    gfe.plot_excursion(
         field=field_rpw,
         largest_comp=False,
         boundary=True,
@@ -61,7 +62,7 @@ def main():
         show=False
     )
 
-    field_matern = simulate_field(
+    field_matern = gfe.simulate_field(
         x_size=20,
         y_size=20,
         pixel_density=10,
@@ -69,17 +70,43 @@ def main():
         seed=123
     )
     
-    plot_field(
+    gfe.plot_excursion(
         field=field_matern,
         show=False,
         save=True,
         filename=output_directory / "matern_field.png"
     )
 
-    #Add 
-    # 1) black and white excursion set (different threshold)
-    # 2) Example of different colour scheme (small number of pixels)
+    thresholds = np.linspace(4, -4, 40)
+    tensor_bf = gfe.excursion_set_tensor(field_bf, thresholds=thresholds)
+    max_point_bf = np.unravel_index(np.argmax(field_bf), field_bf.shape)
+    label_bf = gfe.label_component_point(tensor_bf, max_point_bf)
+    gfe.animate_phase_transition(
+        label_bf,
+        filename=output_directory / "bargmann_fock_phase_transition.gif",
+        threshold_values=thresholds,
+        frame_duration_ms=200,
+        colour_scheme={
+            "mode": "selected",
+            "colours": ("lightgrey", "crimson"),
+            "background": "white",
+        },
+    )
 
+    tensor_rpw = gfe.excursion_set_tensor(field_rpw, thresholds=thresholds)
+    label_rpw = gfe.label_excursion_components(tensor_rpw)
+    gfe.animate_phase_transition(
+        label_rpw,
+        filename=output_directory / "random_plane_wave_phase_transition.gif",
+        threshold_values=thresholds,
+        frame_duration_ms=200,
+        colour_scheme={
+            "mode": "components",
+            "colours": "tab20",
+            "background": "white",
+        },
+    )
+    
     plt.close("all")
 
 if __name__ == "__main__":

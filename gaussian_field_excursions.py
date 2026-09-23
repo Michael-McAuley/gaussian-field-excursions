@@ -7,15 +7,21 @@ a convenience wrapper around the complete workflow.
 """
 
 from pathlib import Path
-
-import matplotlib.colors
+from collections.abc import Mapping
+from matplotlib import animation, colors, colormaps
 import matplotlib.pyplot as plt
 import numpy as np
 from gstools import Gaussian, JBessel, Matern, Rational, SRF
 from scipy import ndimage
 
 
+
 DEFAULT_COLOURS = ("black", "white", "green", "orange")
+DEFAULT_ANIMATION_COLOUR_SCHEME = {
+    "mode": "components",
+    "colours": "tab20",
+    "background": "white",
+}
 
 
 def _covariance_model(covariance, beta=1, nu=1):
@@ -82,7 +88,7 @@ def simulate_field(
 
 
 def find_excursion_set(field, threshold=0):
-    """Return the lower excursion set ``field > threshold`` as a boolean mask."""
+    """Return the upper excursion set ``field > threshold`` as a boolean mask."""
     field = np.asarray(field)
     if field.ndim != 2:
         raise ValueError("field must be a two-dimensional array")
@@ -189,9 +195,9 @@ def plot_mask(
     else:
         fig = ax.figure
 
-    cmap = matplotlib.colors.ListedColormap(colours[:number_of_labels])
+    cmap = colors.ListedColormap(colours[:number_of_labels])
     boundaries = np.arange(number_of_labels + 1) - 0.5
-    norm = matplotlib.colors.BoundaryNorm(boundaries, cmap.N)
+    norm = colors.BoundaryNorm(boundaries, cmap.N)
     ax.imshow(
         labelled_mask.T,
         cmap=cmap,
@@ -300,3 +306,262 @@ def plot_excursion(
         "figure": fig,
         "axes": ax,
     }
+
+
+def excursion_set_tensor(field, thresholds):
+    """Returns a tensor of excursion sets for the given field at the specified thresholds."""
+    tensor = np.zeros((len(thresholds), *field.shape), dtype=bool)
+    for i, threshold in enumerate(thresholds):
+        tensor[i] = field > threshold
+    return tensor
+
+def label_excursion_components(tensor):
+    """Labels connected components in the excursion set tensor."""
+    labelled_tensor = np.zeros_like(tensor, dtype=int)
+
+    labelled_tensor[0], num_features = ndimage.label(tensor[0])
+    for i in range(1, tensor.shape[0]):
+        current_components, current_count = ndimage.label(tensor[i])
+        for j in range(1, current_count + 1):
+            # Find the overlap with the previous level's labels
+            overlap = labelled_tensor[i-1][(current_components == j) & (labelled_tensor[i-1] > 0)]
+            if overlap.size > 0:
+                # Assign the most common label from the previous level
+                most_common_label = np.bincount(overlap).argmax()
+                labelled_tensor[i][current_components == j] = most_common_label
+            else:
+                # Assign a new label
+                num_features += 1
+                labelled_tensor[i][current_components == j] = num_features
+    return labelled_tensor
+
+def label_largest_component(tensor):
+    """Label the largest component at each level of an excursion-set tensor.
+
+    Background pixels receive label zero, pixels in all non-largest excursion
+    components receive label one, and pixels in the largest component receive
+    label two.
+    """
+    tensor = np.asarray(tensor, dtype=bool)
+    if tensor.ndim != 3:
+        raise ValueError("tensor must have shape (frames, rows, columns)")
+
+    labelled_tensor = np.zeros(tensor.shape, dtype=np.uint8)
+    labelled_tensor[tensor] = 1
+
+    for i in range(tensor.shape[0]):
+        largest_component = find_largest_component(tensor[i])
+        labelled_tensor[i][largest_component] = 2
+
+    return labelled_tensor
+
+def label_component_point(tensor, point):
+    """Label the component containing a specific point in an excursion-set tensor.
+
+    Background pixels receive label zero, pixels in all other components receive
+    label one, and pixels in the component containing the specified point receive
+    label two.
+    """
+    tensor = np.asarray(tensor, dtype=bool)
+    if tensor.ndim != 3:
+        raise ValueError("tensor must have shape (frames, rows, columns)")
+
+    labelled_tensor = np.zeros(tensor.shape, dtype=np.uint8)
+    labelled_tensor[tensor] = 1
+
+    for i in range(tensor.shape[0]):
+        if tensor[i][point]:
+            # Label the component containing the point
+            component = ndimage.label(tensor[i])[0]
+            point_label = component[point]
+            labelled_tensor[i][component == point_label] = 2
+
+    return labelled_tensor
+
+def _validate_animation_inputs(
+    labelled_tensor, filename, frame_duration_ms, threshold_values
+):
+    """Validate and normalise the common animation inputs."""
+    labelled_tensor = np.asarray(labelled_tensor)
+    if labelled_tensor.ndim != 3:
+        raise ValueError(
+            "labelled_tensor must have shape (frames, rows, columns)"
+        )
+    if labelled_tensor.shape[0] == 0:
+        raise ValueError("labelled_tensor must contain at least one frame")
+    if not np.issubdtype(labelled_tensor.dtype, np.integer):
+        raise TypeError("labelled_tensor must contain integer labels")
+    if np.any(labelled_tensor < 0):
+        raise ValueError("labels must be non-negative integers")
+    if frame_duration_ms <= 0:
+        raise ValueError("frame_duration_ms must be positive")
+    if (
+        threshold_values is not None
+        and len(threshold_values) != labelled_tensor.shape[0]
+    ):
+        raise ValueError("threshold_values must contain one value per frame")
+
+    output_path = Path(filename)
+    if output_path.suffix.lower() != ".gif":
+        raise ValueError("filename must have a .gif extension")
+
+    return labelled_tensor, output_path
+
+
+def _label_colour_mapping(labelled_tensor, colour_scheme=None):
+    """Return the colour map and norm described by ``colour_scheme``."""
+    if colour_scheme is None:
+        colour_scheme = DEFAULT_ANIMATION_COLOUR_SCHEME
+    if not isinstance(colour_scheme, Mapping):
+        raise TypeError("colour_scheme must be a mapping")
+
+    unknown_keys = set(colour_scheme) - {"mode", "colours", "background"}
+    if unknown_keys:
+        unknown = ", ".join(sorted(unknown_keys))
+        raise ValueError(f"Unknown colour_scheme key(s): {unknown}")
+
+    mode = str(colour_scheme.get("mode", "components")).strip().lower()
+    if mode not in {"components", "selected", "uniform"}:
+        raise ValueError(
+            "colour_scheme mode must be 'components', 'selected', or 'uniform'"
+        )
+
+    background = colors.to_rgba(
+        colour_scheme.get("background", "white")
+    )
+    maximum_label = int(labelled_tensor.max())
+
+    if mode == "components":
+        selected_colour_map = colormaps.get_cmap(
+            colour_scheme.get("colours", "tab20")
+        )
+        positive_colours = (
+            selected_colour_map(np.linspace(0, 1, maximum_label))
+            if maximum_label > 0
+            else np.empty((0, 4))
+        )
+    elif mode == "selected":
+        if not np.isin(labelled_tensor, (0, 1, 2)).all():
+            raise ValueError(
+                "In selected mode, labelled_tensor may only contain "
+                "labels 0, 1, and 2"
+            )
+        selected_colours = colour_scheme.get(
+            "colours", ("lightgrey", "crimson")
+        )
+        if (
+            isinstance(selected_colours, (str, bytes))
+            or len(selected_colours) != 2
+        ):
+            raise ValueError(
+                "Selected mode requires exactly two colours: "
+                "(other, selected)"
+            )
+        positive_colours = np.array(
+            [colors.to_rgba(colour) for colour in selected_colours]
+        )
+    else:
+        uniform_colour = colors.to_rgba(
+            colour_scheme.get("colours", "tab:blue")
+        )
+        positive_colours = np.tile(uniform_colour, (maximum_label, 1))
+
+    colour_values = np.vstack((background, positive_colours))
+    discrete_colour_map = colors.ListedColormap(colour_values)
+    boundaries = np.arange(discrete_colour_map.N + 1) - 0.5
+    colour_norm = colors.BoundaryNorm(boundaries, discrete_colour_map.N)
+    return discrete_colour_map, colour_norm
+
+
+def animate_phase_transition(
+    labelled_tensor,
+    filename="labelled_excursion_sets.gif",
+    frame_duration_ms=500,
+    threshold_values=None,
+    colour_scheme=None,
+):
+    """Create a GIF showing changes in a labelled excursion-set tensor.
+
+    The first axis is interpreted as the frame axis. Label zero is the
+    background, and each positive label keeps the same colour in every frame.
+
+    Parameters
+    ----------
+    labelled_tensor : numpy.ndarray
+        A three-dimensional integer array with shape (frames, rows, columns).
+    filename : str or pathlib.Path, optional
+        Output GIF path.
+    frame_duration_ms : int or float, optional
+        Time for which each frame is displayed, in milliseconds.
+    threshold_values : sequence, optional
+        Thresholds to display in the frame titles. Its length
+        must equal the number of frames.
+    colour_scheme : mapping, optional
+        Colour configuration with ``mode``, ``colours``, and ``background``
+        entries. Mode ``"components"`` assigns a colour-map colour to each
+        positive label; ``"selected"`` maps labels one and two to the
+        ``(other, selected)`` colours; and ``"uniform"`` gives every positive
+        label the same colour. By default, components use ``"tab20"`` on a
+        white background.
+
+    Returns
+    -------
+    pathlib.Path
+        The path of the saved GIF.
+    """
+
+    labelled_tensor, output_path = _validate_animation_inputs(
+        labelled_tensor, filename, frame_duration_ms, threshold_values
+    )
+    number_of_frames = labelled_tensor.shape[0]
+
+    discrete_colour_map, colour_norm = _label_colour_mapping(
+        labelled_tensor, colour_scheme=colour_scheme
+    )
+
+    has_title = threshold_values is not None
+    rows, columns = labelled_tensor.shape[1:]
+    image_width = 6
+    image_height = image_width * rows / columns
+    title_height = 0.4 if has_title else 0
+
+    figure, axis = plt.subplots(
+        figsize=(image_width, image_height + title_height)
+    )
+    figure.subplots_adjust(
+        left=0,
+        right=1,
+        bottom=0,
+        top=image_height / (image_height + title_height),
+    )
+    image = axis.imshow(
+        labelled_tensor[0],
+        cmap=discrete_colour_map,
+        norm=colour_norm,
+        interpolation="nearest",
+    )
+    axis.set_axis_off()
+    title = axis.set_title(
+        f"Threshold: {threshold_values[0]:.2f}"
+        if has_title else "",
+        pad=3,
+    )
+
+    def update(frame):
+        image.set_data(labelled_tensor[frame])
+        if threshold_values is not None:
+            title.set_text(f"Threshold: {threshold_values[frame]:.2f}")
+        return image, title
+
+    gif_animation = animation.FuncAnimation(
+        figure,
+        update,
+        frames=number_of_frames,
+        interval=frame_duration_ms,
+        blit=True,
+    )
+    writer = animation.PillowWriter(fps=1000 / frame_duration_ms)
+    gif_animation.save(output_path, writer=writer)
+    plt.close(figure)
+
+    return output_path

@@ -58,6 +58,25 @@ This is often abbreviated to $\{f\geq\ell\}$.
   </em>
 </p>
 
+Dynamic plots can also be produced, to highlight the 'percolation phase transition', see below for details.
+
+<p align="center">
+  <img
+    src="docs/images/bargmann_fock_phase_transition.gif"
+    alt="Bargmann-Fock excursion sets at different thresholds, with one component highlighted."
+    width="47%"
+  >
+  <img
+    src="docs/images/random_plane_wave_phase_transition.gif"
+    alt="Random plane wave excursion sets at different thresholds, with components coloured distinctly."
+    width="47%"
+  >
+  <br>
+  <em>
+    Figure 3. Excursion sets at different threshold levels. Left: one component is highlighted in crimson, all others are grey. Right: different components are shown in distinct colours.
+  </em>
+</p>
+
 Simulations of fields in this module are created using [GSTools](https://geostat-framework.readthedocs.io/projects/gstools/en/stable/contents.html).
 
 ## Installation
@@ -87,22 +106,30 @@ The module supports the following four covariance structures:
 
 ### Random plane wave
 The random plane wave has covariance
+
 $$\mathrm{Cov}[f(x),f(y)]=J_0(\lvert x-y\rvert)$$
+
 where $J_0$ denotes the zero-th Bessel function of the first kind. This function can be thought of heuristically as a random superposition of sine waves uniformly distributed over all directions. This model is a special case of _monochromatic random waves_ which are widely studied in mathematical physics [[3]](#reference-3). An important source of motivation for studying this model comes from a conjecture by Michael Berry that high-energy Laplace eigenfunctions on generic Riemannian manifolds can be well-approximated by monochromatic random waves [[6]](#reference-6). This field can be simulated by passing the argument `covariance="rpw"` to `simulate_field`.
 
 ### Bargmann-Fock field
 The Bargmann-Fock field has covariance
+
 $$\mathrm{Cov}[f(x),f(y)]=\exp\big(-\lvert x-y\rvert^2/2\big).$$
+
 The study of this field is motivated by the fact that it describes the local scaling limit of a canonical measure on random homogeneous polynomials [[5, Section 2]](#reference-2). It is also of great interest in percolation theory as it has properties which make it amenable to classical arguments (namely, fast correlation decay and the FKG property). See [[5]](#reference-5) for further details. This field can be simulated using the argument `covariance="bf"`.
 
 ### Matérn field
 The Matérn field with parameter $\nu>0$ has covariance function
+
 $$\mathrm{Cov}[f(x),f(y)]=\frac{2^{1-\nu}}{\Gamma(\nu)}\big(\sqrt{\nu}\lvert x-y\rvert\big)^\nu K_\nu\big(\sqrt{\nu}\lvert x-y\rvert\big),$$
+
 where $\Gamma$ is the Gamma function and $K_\nu$ denotes the modified Bessel function of the second kind. This family of fields is widely used in machine learning [[7, Chapter 4]](#reference-7). To simulate this field, the function `simulate_field` requires the argument `covariance="matern"` and a value for the parameter `nu`.
 
 ### Rational quadratic
 The rational quadratic field with parameter $\beta>0$ has covariance
+
 $$\mathrm{Cov}[f(x),f(y)]=(1+\beta^{-1}\lvert x-y\rvert^2)^{-\beta}.$$
+
 This model has been used as a canonical example of a strongly correlated field (when $\beta<d/2$) in studying percolation [[8]](#reference-8). This field may be simulated by specifying `covariance="rq"` and a value for `beta` in the function `simulate_field`.
 
 ## Coordinate and length-scale conventions
