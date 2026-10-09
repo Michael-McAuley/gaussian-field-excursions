@@ -81,10 +81,24 @@ Simulations of fields in this module are created using [GSTools](https://geostat
 
 ## Installation
 
+From the repository root, install the project and its dependencies with uv:
+
+```bash
+uv sync
+```
+
+Alternatively, create a virtual environment and install with pip:
+
 ```bash
 python -m venv .venv
-pip install -r requirements.txt
+# Activate .venv before running the next command.
+python -m pip install -e .
 ```
+
+Both methods install the module in editable mode, so changes to the source are
+available without reinstalling. Import `gaussian_field_excursions` from the
+environment where it is installed. For a non-editable installation, use
+`python -m pip install .` instead.
 
 ## Minimal example
 

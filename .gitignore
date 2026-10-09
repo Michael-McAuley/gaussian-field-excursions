@@ -11,6 +11,7 @@ env/
 # Build and packaging output
 build/
 dist/
+.package-check/
 *.egg-info/
 
 # Test, coverage, type-checker, and linter caches

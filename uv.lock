@@ -163,7 +163,7 @@ wheels = [
 [[package]]
 name = "gaussian-field-excursions"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "gstools" },
     { name = "matplotlib" },
